@@ -1,0 +1,5 @@
+email=
+password=
+user_id=
+space_id=
+bot_id=

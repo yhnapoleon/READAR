@@ -1,0 +1,12 @@
+# credentials and instance-specific ids
+local-account.txt
+radar_ids.json
+
+# generated at runtime
+canvases/
+cards/
+runs/
+demo/
+projects/
+__pycache__/
+*.pyc

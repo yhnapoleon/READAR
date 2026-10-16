@@ -1,10 +1,10 @@
 # 论文→实践雷达：构建方案
 
-> 2026-10-15 初稿。目标读者是我们自己（用户 + Claude Code），不是导师。导师看的内容后面从这里提炼进 stage1 第 7、8 节。
+> 2026-10-15 初稿。目标读者是我们自己，不是导师。导师看的内容后面从这里提炼进 stage1 第 7、8 节。
 
 ## 0. 一句话
 
-给定一个正在做的项目，雷达去找"相关论文里的具体机制"，判断哪些能以半天内的改动移植进项目，生成可执行、可测量的实验卡，交给编码 Agent（Claude Code）试，结果回写，下一轮据此调整。
+给定一个正在做的项目，雷达去找"相关论文里的具体机制"，判断哪些能以半天内的改动移植进项目，生成可执行、可测量的实验卡，交给编码 Agent 试，结果回写，下一轮据此调整。
 
 **边界：** Coze Studio 只负责"找、判、出卡、记结果"；执行留在本机脚本和项目仓库里。
 
@@ -22,12 +22,12 @@
 │    WF-A 项目画像     文档 → 模块清单 + 痛点清单                     │
 │    WF-B 发散检索     痛点 → 多 query → arXiv → 引用扩展 → 机制判定   │
 │    WF-C 可行性+出卡  机制 → 多准则可行性 → 实验卡 → 飞书推送          │
-│    WF-D 结果回写     CC 结果 → 更新卡状态 → 写经验条目               │
+│    WF-D 结果回写     执行结果 → 更新卡状态 → 写经验条目               │
 │  智能体 Radar        意图路由 WF-B/C/D + 库内问答(NL2SQL + 检索)     │
 └──────────────────────────────────────────────────────────────────┘
         │  bridge/pull_cards.py        ▲ bridge/report_result.py
         ▼                              │
-  cards/<id>.md ──► bridge/run_card.py ─► claude -p 在项目 worktree 里跑
+  cards/<id>.md ──► bridge/run_card.py ─► 编码 Agent 在项目 worktree 里跑
                                          产出 result.json + diff
         │
         └──► 飞书自定义机器人 webhook（日报 / 新卡通知）
@@ -45,7 +45,7 @@
 | `pain_point` | id, project_id, module, description, metric, priority(1-3), status(open/closed) | WF-A 产出，用户可改 |
 | `paper` | arxiv_id, title, authors, published, abstract, url, code_url, cited_by, source(search/expand/manual), first_seen | 去重键 arxiv_id |
 | `mechanism` | id, paper_id, name, description, target_module, pain_point_id, relevance(0-10), relevance_reason, feasibility_json, feasibility_score(0-1), status(candidate/carded/rejected/tried) | 一篇论文可拆出多条机制 |
-| `experiment_card` | id, mechanism_id, title, hypothesis, change_scope, steps, eval_method, budget_min, status(new/running/done/failed), result_json, verdict(win/neutral/lose/blocked), note, created_at, finished_at | 交给 CC 的单元 |
+| `experiment_card` | id, mechanism_id, title, hypothesis, change_scope, steps, eval_method, budget_min, status(new/running/done/failed), result_json, verdict(win/neutral/lose/blocked), note, created_at, finished_at | 交给编码 Agent 的单元 |
 
 ## 3. 知识库
 
@@ -171,7 +171,7 @@
 | `coze_client.py` | 登录拿 session_key；封装内部接口和 OpenAPI（PAT）；所有凭据从 `local-account.txt` 读 | `/api/passport/web/email/login/`、`/v1/workflow/run` |
 | `push_project.py <repo>` | 收集 README、docs/*.md、架构文件 → 上传知识库 → 调 WF-A | `/api/knowledge/document/create`、WF-A |
 | `pull_cards.py` | 查 status=new 的卡 → 写 `cards/CARD-<id>.md` | WF 查询或 `/api/memory/database/...` |
-| `run_card.py <id>` | 在项目仓库建 worktree，`claude -p "$(cat card)" --max-turns N` 加超时；收集 result.json、diff、日志 | 无 |
+| `run_card.py <id>` | 在项目仓库建 worktree，调用编码 Agent CLI，加超时；收集 result.json、diff、日志 | 无 |
 | `report_result.py` | 调 WF-D | WF-D |
 | `weekly.py` | 对所有 open 痛点跑 WF-B，再跑 WF-C；发飞书汇总 | WF-B、WF-C |
 
@@ -194,7 +194,7 @@
 | M4 WF-C | 同上 | 至少出 2 张卡，卡里的评测方法指向项目里真实存在的文件 |
 | M5 WF-A、WF-D、智能体 | | 对话里问"候选机制有哪些"能查库回答 |
 | M6 Bridge | 五个脚本 | `weekly.py` 一次跑通，飞书群收到汇总 |
-| M7 首次端到端 | 选一个项目，跑 WF-A → B → C → CC 执行 1 张卡 → WF-D | 数据库里有一条 tried 记录，知识库里有一条经验 |
+| M7 首次端到端 | 选一个项目，跑 WF-A → B → C → 编码 Agent 执行 1 张卡 → WF-D | 数据库里有一条 tried 记录，知识库里有一条经验 |
 
 M0 到 M2 一个工作日内；M3 是最费时间的，画布 JSON 的字段细节靠 `backend/domain/workflow/internal/canvas/examples/` 的示例对照。
 
@@ -209,12 +209,12 @@ M0 到 M2 一个工作日内；M3 是最费时间的，画布 JSON 的字段细�
 | Semantic Scholar 匿名 429 | v1 不依赖；要 TL;DR 和正负样本推荐再申请 |
 | arXiv HTML 转换缺失 | 回退 ar5iv，再回退只用摘要并在可行性里标 unknown |
 | 开源版单表字段上限 | 待核；超了把 JSON 塞 String |
-| CC 执行成本 | 每卡预算上限，默认 60 分钟；一周最多 3 张 |
+| 执行成本 | 每卡预算上限，默认 60 分钟；一周最多 3 张 |
 
 ## 10. 待你决定
 
 1. **第一个目标项目。** 你说会议 Agent 不合适。候选：你手头任何有代码、能跑测试的项目；或者先用一个你熟悉的开源 Agent 框架做演练（好处是有测试集，坏处是改动不归你）。
-2. **实验卡预算**：默认一卡一个机制、CC 60 分钟。
+2. **实验卡预算**：默认一卡一个机制、60 分钟。
 3. **推送群**：需要你在某个飞书群里加一个自定义机器人，把 webhook URL 给我（放 `local-account.txt`，不进聊天）。
 4. **S2 Key** 先不申请，v1 走 OpenAlex。同意就不动。
 

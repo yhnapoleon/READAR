@@ -1,4 +1,8 @@
-"""Run one experiment card with Claude Code inside the target repo, on a throwaway branch.
+"""Run one experiment card with a coding agent CLI inside the target repo, on a throwaway branch.
+
+The agent command comes from RADAR_AGENT_CMD (a shell command that reads the prompt from stdin and
+prints a JSON object with at least a "result" field); the default targets a local CLI agent with
+whitelisted tools.
 
 usage: python run_card.py --card cards/CARD-<id>.md --repo <path> [--budget-min 45] [--dry-run]
 
@@ -7,6 +11,7 @@ changes are committed on that branch and the original branch is checked out agai
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -51,7 +56,8 @@ def main():
         sys.exit(f"repo has uncommitted tracked changes, refusing to run:\n" + "\n".join(dirty))
     branch = f"radar/card-{card_id}"
     prompt = GUARDRAILS.format(budget=a.budget_min) + "\n\n===== 实验卡 =====\n" + card
-    cmd = ["claude", "-p", "--output-format", "json", "--max-turns", "80", "--allowedTools", ",".join(ALLOWED)]
+    cmd = os.environ.get("RADAR_AGENT_CMD") or " ".join(
+        ["claude", "-p", "--output-format", "json", "--max-turns", "80", "--allowedTools", ",".join(ALLOWED)])
     print(f"branch {branch} from {orig_branch}@{git(repo, 'rev-parse', '--short', 'HEAD')}; budget {a.budget_min} min")
     if a.dry_run:
         print(prompt[:1500])
@@ -69,7 +75,7 @@ def main():
         result["stderr_tail"] = p.stderr[-2000:]
         try:
             j = json.loads(p.stdout)
-            result["cc"] = {k: j.get(k) for k in ("result", "total_cost_usd", "duration_ms", "num_turns", "is_error", "subtype")}
+            result["agent"] = {k: j.get(k) for k in ("result", "total_cost_usd", "duration_ms", "num_turns", "is_error", "subtype")}
         except Exception:
             pass
     except subprocess.TimeoutExpired as e:
@@ -88,7 +94,7 @@ def main():
         git(repo, "add", "-u")
         if rr.exists():
             git(repo, "add", "radar_result.json")
-        subprocess.run(["git", "commit", "-q", "-m", f"radar: card {card_id} (auto-commit of experiment leftovers)\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"],
+        subprocess.run(["git", "commit", "-q", "-m", f"radar: card {card_id} (auto-commit of experiment leftovers)"],
                        cwd=repo, capture_output=True, text=True)
     result["diff_stat"] = git(repo, "diff", "--stat", f"{orig_branch}...{branch}")
     result["commits"] = git(repo, "log", "--oneline", f"{orig_branch}..{branch}")
@@ -96,7 +102,7 @@ def main():
     (ROOT / "runs").mkdir(exist_ok=True)
     out = ROOT / "runs" / f"card-{card_id}.json"
     out.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(json.dumps({k: result.get(k) for k in ("exit_code", "elapsed_min", "cc", "radar_result", "commits")}, ensure_ascii=False, indent=1))
+    print(json.dumps({k: result.get(k) for k in ("exit_code", "elapsed_min", "agent", "radar_result", "commits")}, ensure_ascii=False, indent=1))
     print("diff:", result["diff_stat"][-800:])
     print("saved", out)
 

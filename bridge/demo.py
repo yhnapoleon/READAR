@@ -1,7 +1,7 @@
-"""One-shot demo: pain point -> WF-B (papers, mechanisms) -> WF-C (feasibility, cards) -> Claude Code runs one card
+"""One-shot demo: pain point -> WF-B (papers, mechanisms) -> WF-C (feasibility, cards) -> coding agent runs one card
 -> WF-D (write-back, experience). Writes demo/DEMO-<timestamp>.md.
 
-usage: python demo.py --project ShopSteward --repo <path> --pain-point-id <id> [--max-results 15] [--budget-min 20] [--skip-cc]
+usage: python demo.py --project ShopSteward --repo <path> --pain-point-id <id> [--max-results 15] [--budget-min 20] [--skip-agent]
 """
 import argparse
 import json
@@ -43,7 +43,7 @@ def main():
     ap.add_argument("--pain-point-id", required=True)
     ap.add_argument("--max-results", default="15")
     ap.add_argument("--budget-min", type=int, default=20)
-    ap.add_argument("--skip-cc", action="store_true")
+    ap.add_argument("--skip-agent", action="store_true")
     ap.add_argument("--from-cards", action="store_true", help="skip WF-B/WF-C; rebuild sections 2-3 from the DB and continue")
     a = ap.parse_args()
     t_start = time.time()
@@ -95,7 +95,7 @@ def main():
                       "\n".join(f"- {t}" for t in titles) + "\n")
         print(f"WF-C done: assessed {flat.get('assessed')} passed {flat.get('passed')} cards {len(titles)} ({d.get('workflowExeCost')})")
 
-    # 3. pick a card and run it with Claude Code
+    # 3. pick a card and run it with the coding agent
     print(run([PY, "bridge/pull_cards.py", "new"]))
     cards = [r for r in fetch_all(c, "experiment_card") if r.get("status") == "new"]
     mechs = {m["bstudio_id"]: m for m in fetch_all(c, "mechanism")}
@@ -108,19 +108,19 @@ def main():
         cid = card["bstudio_id"]
         card_md = (ROOT / "cards" / f"CARD-{cid}.md").read_text(encoding="utf-8")
         report.append(f"## 4. 选中的实验卡\n\n```markdown\n{card_md}\n```\n")
-        if a.skip_cc:
-            report.append("（--skip-cc：未执行）\n")
+        if a.skip_agent:
+            report.append("（--skip-agent：未执行）\n")
         else:
-            print(f"Claude Code runs CARD-{cid} (budget {a.budget_min} min) ...")
+            print(f"coding agent runs CARD-{cid} (budget {a.budget_min} min) ...")
             out = run([PY, "bridge/run_card.py", "--card", f"cards/CARD-{cid}.md", "--repo", a.repo, "--budget-min", str(a.budget_min)],
                       timeout=a.budget_min * 60 + 600)
             res = json.loads((ROOT / "runs" / f"card-{cid}.json").read_text(encoding="utf-8"))
             rr = res.get("radar_result") or {}
-            cc = res.get("cc") or {}
-            report.append(f"## 5. Claude Code 执行结果\n\n- verdict：**{rr.get('verdict', '?')}**\n- 指标：{rr.get('metric')}\n- 基线：{rr.get('baseline')}\n- 改后：{rr.get('after')}\n"
-                          f"- 改动文件：{', '.join(rr.get('changed_files') or [])}\n- 用时 {res.get('elapsed_min')} 分钟，{cc.get('num_turns')} 轮，约 {round(cc.get('total_cost_usd') or 0, 2)} 美元\n"
-                          f"- 分支：`{res.get('branch')}`（{(res.get('commits') or '').strip()}）\n\n**CC 的说明：**\n\n{rr.get('notes', '')}\n\n**CC 最终回复：**\n\n{(cc.get('result') or '')[:3000]}\n")
-            print(f"CC done: {rr.get('verdict')} in {res.get('elapsed_min')} min")
+            ag = res.get("agent") or {}
+            report.append(f"## 5. 编码 Agent 执行结果\n\n- verdict：**{rr.get('verdict', '?')}**\n- 指标：{rr.get('metric')}\n- 基线：{rr.get('baseline')}\n- 改后：{rr.get('after')}\n"
+                          f"- 改动文件：{', '.join(rr.get('changed_files') or [])}\n- 用时 {res.get('elapsed_min')} 分钟，{ag.get('num_turns')} 轮，约 {round(ag.get('total_cost_usd') or 0, 2)} 美元\n"
+                          f"- 分支：`{res.get('branch')}`（{(res.get('commits') or '').strip()}）\n\n**执行说明：**\n\n{rr.get('notes', '')}\n\n**最终回复：**\n\n{(ag.get('result') or '')[:3000]}\n")
+            print(f"agent done: {rr.get('verdict')} in {res.get('elapsed_min')} min")
             # 4. WF-D
             print("WF-D ...")
             out = run([PY, "bridge/report_result.py", "--run", f"runs/card-{cid}.json", "--project", a.project])

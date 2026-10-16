@@ -68,7 +68,7 @@ agent/src/shopsteward_agent/ 新增1个模块文件；agent/src/shopsteward_agen
 
 ```
 
-## 5. Claude Code 执行结果
+## 5. 编码 Agent 执行结果
 
 - verdict：**neutral**
 - 指标：pytest pass count: ..\.venv\Scripts\python.exe -m pytest tests ../agent/tests -c pyproject.toml -q (run from backend/)
@@ -78,11 +78,11 @@ agent/src/shopsteward_agent/ 新增1个模块文件；agent/src/shopsteward_agen
 - 用时 4.3 分钟，34 轮，约 1.25 美元
 - 分支：`radar/card-7696846390902652928`（aacd7aa radar: Agent 工具子进程沙箱与墙钟超时（最小））
 
-**CC 的说明：**
+**执行说明：**
 
 Added opt-in subprocess sandbox (python -I, credential-free env, 2s wall clock) for the single read-only frozen-case tool read_forecast_profile, gated by AGENT_TOOL_SANDBOX=1, default off. Timeout/crash return {ok:false, error:TOOL_SANDBOX_TIMEOUT|TOOL_SANDBOX_CRASH, references:[]} and never raise; stderr/returncode kept on the ToolError object, not sent to the model. Pass count unchanged; the 82 errors are pre-existing (same set as baseline: DB-backed and knowledge_storage fixtures, plus test_seed_bundle_is_hash_bound...). CAVEAT: step 5 not done for the full-suite run. The permission layer required approval for the env-prefixed command (AGENT_TOOL_SANDBOX=1 ...), approval was not available, and it was not worked around. So the 'after' run is the card's literal command on the default (sandbox-off) path. The sandbox-on path was checked separately by calling the code directly: success returns data identical to the default path (child start ~0.15s); a crashing child maps to TOOL_SANDBOX_CRASH; a 5s sleeper is killed at 2s and maps to TOOL_SANDBOX_TIMEOUT. The only suite test that reaches this tool (agent/tests/test_case_bundle.py::test_frozen_run_is_bound_to_its_bundle_and_logs_each_evidence_read) only asserts on tool_log, so it would not detect a sandbox regression either way. To finish step 5, run from backend/: $env:AGENT_TOOL_SANDBOX='1'; ..\.venv\Scripts\python.exe -m pytest tests ../agent/tests -c pyproject.toml -q
 
-**CC 最终回复：**
+**最终回复：**
 
 结果是 **neutral**：改动前后通过数都是 514，没有下降。但改动后那一轮是在沙箱关闭的默认路径上跑的，因为我没能按第 5 步设置 `AGENT_TOOL_SANDBOX=1`。已提交到 `radar/card-7696846390902652928`（aacd7aa），没有 push。
 

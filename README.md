@@ -1,8 +1,8 @@
 # READAR · 论文→实践雷达
 
-> **Re**search **a**gent for **D**iscovering **A**pplicable **R**esults. 给定一个正在开发的项目，去 arXiv 找论文里**可以单独移植的机制**，判断可行性，生成**最小规模、可测量**的实验卡，交给编码 Agent（Claude Code）在项目分支上试，结果和经验回写，供下一轮判定参考。
+> **Re**search **a**gent for **D**iscovering **A**pplicable **R**esults. 给定一个正在开发的项目，去 arXiv 找论文里**可以单独移植的机制**，判断可行性，生成**最小规模、可测量**的实验卡，交给编码 Agent 在项目分支上试，结果和经验回写，供下一轮判定参考。
 
-运行时是开源的 [Coze Studio](https://github.com/coze-dev/coze-studio)：5 张数据表、1 个知识库、4 条工作流、1 个智能体。编排不在界面上拖，全部由 `bridge/` 下的 Python 脚本通过 Coze Studio 的内部接口完成，画布 JSON 由脚本生成。Claude Code 的执行在目标项目仓库里，Coze 只负责找、判、出卡、记结果。
+运行时是开源的 [Coze Studio](https://github.com/coze-dev/coze-studio)：5 张数据表、1 个知识库、4 条工作流、1 个智能体。编排不在界面上拖，全部由 `bridge/` 下的 Python 脚本通过 Coze Studio 的内部接口完成，画布 JSON 由脚本生成。实验在目标项目仓库里由本地的编码 Agent 执行，Coze 负责找、判、出卡、记结果。
 
 ---
 
@@ -42,10 +42,10 @@ READAR 换一个问题：**这篇论文里有没有一个机制，能用半天�
 | 选痛点 | "Agent 每次运行最多 8 轮模型、12 次工具、90 秒窗口；崩溃时可能重发同一逻辑轮次产生额外用量" |
 | WF-B 发散检索 | 痛点改写成两组 AND 的 arXiv 检索式；15 篇逐篇判定，留 13 篇，拆出 54 条机制（幂等键、步级检查点、Verify-Before-Retry、沙箱超时……） |
 | WF-C 可行性与出卡 | 多准则判定（要不要训练、要不要外部数据、改动范围、项目里能不能评测），27 条过线，每条生成一张最小实验卡 |
-| Claude Code 执行 | 选预算最小的卡："子进程沙箱 + 2 秒墙钟超时，只包一个只读工具，默认关闭"。4.3 分钟、34 轮、约 1.25 美元，改 3 个文件，测试通过数 514 → 514 |
+| 编码 Agent 执行 | 选预算最小的卡："子进程沙箱 + 2 秒墙钟超时，只包一个只读工具，默认关闭"。4.3 分钟、34 轮、约 1.25 美元，改 3 个文件，测试通过数 514 → 514 |
 | WF-D 回写 | verdict = **neutral**。经验条目入库："回归未启沙箱，单测等效。局限：未跑启沙箱的整套回归。适用条件：仅单一只读工具……" |
 
-另一张卡（"按失败类型选恢复动作"收成只处理 429 限流的最小版，来自 arXiv 2602.15197）结果是 win：测试 148 → 149，改 2 个文件。但 Claude Code 自己指出：后端在把工具结果交给 Agent 之前已把 HTTP 错误转成普通失败，真实 429 根本走不到这个分支。**这类"接得进去但不会生效"的发现，是这套流程最有价值的输出**，它也被压成经验条目，下一轮判定时会被检索到。
+另一张卡（"按失败类型选恢复动作"收成只处理 429 限流的最小版，来自 arXiv 2602.15197）结果是 win：测试 148 → 149，改 2 个文件。但编码 Agent 自己指出：后端在把工具结果交给 Agent 之前已把 HTTP 错误转成普通失败，真实 429 根本走不到这个分支。**这类"接得进去但不会生效"的发现，是这套流程最有价值的输出**，它也被压成经验条目，下一轮判定时会被检索到。
 
 ## 3. 架构
 
@@ -75,8 +75,8 @@ flowchart LR
     DB --> B --> arXiv[(arXiv API)] --> B --> DB
     DB --> C --> HF[(HF papers API)] --> C
     KB --> C --> DB
-    DB --> pull --> runc --> CC[claude -p<br/>在 radar/card-id 分支] --> Code
-    CC --> rep --> D --> DB & KB
+    DB --> pull --> runc --> EX[编码 Agent<br/>在 radar/card-id 分支] --> Code
+    EX --> rep --> D --> DB & KB
     Agent -. 调用 .-> A & B & C & D
 ```
 
@@ -140,14 +140,14 @@ Entry(card_id, verdict, metric, baseline, after, notes, changed_files, elapsed_m
 4. 评测命令只能从 WF-A 抽出的列表里原样选；找不到就 `blocked=true` 并写缺什么。
 5. 预算 ≤ 45 分钟。
 
-`run_card.py` 的护栏：拒绝在有未提交改动的仓库上运行；从当前 HEAD 开分支 `radar/card-<id>`；`claude -p` 只开白名单工具（Read/Edit/Write/Glob/Grep + git/python/pytest/uv 等 Bash 前缀）；硬超时；结束后只提交已跟踪文件的修改和 `radar_result.json`，切回原分支；不推送、不合并。
+`run_card.py` 的护栏：拒绝在有未提交改动的仓库上运行；从当前 HEAD 开分支 `radar/card-<id>`；编码 Agent 只开白名单工具（Read/Edit/Write/Glob/Grep + git/python/pytest/uv 等 Bash 前缀）；硬超时；结束后只提交已跟踪文件的修改和 `radar_result.json`，切回原分支；不推送、不合并。
 
 ## 7. 从零复现
 
 ### 7.1 环境
 
 - Docker Desktop；Python 3.10+ 和 `pip install -r requirements.txt`（只依赖 `requests`）
-- [Claude Code](https://claude.com/claude-code) CLI（跑实验卡用）
+- 一个能在终端里非交互运行的编码 Agent CLI（跑实验卡用；命令由环境变量 `RADAR_AGENT_CMD` 指定）
 - 一个 OpenAI 协议的模型 Key（本项目用 gpt-5；其他 OpenAI 兼容模型也行，但 Key 和模型名要一起改）
 
 ### 7.2 部署 Coze Studio
@@ -204,7 +204,7 @@ python bridge/wfa_build.py MyProj /path/to/repo "Python, FastAPI, LangGraph" pro
 python bridge/demo.py --project MyProj --repo /path/to/repo --pain-point-id <id> --max-results 15 --budget-min 20
 ```
 
-`demo.py` 依次跑 WF-B → WF-C → 选预算最小的卡交给 Claude Code → WF-D，生成 `demo/DEMO-<时间>.md`。`--from-cards` 跳过前两步，`--skip-cc` 不执行卡。
+`demo.py` 依次跑 WF-B → WF-C → 选预算最小的卡交给编码 Agent → WF-D，生成 `demo/DEMO-<时间>.md`。`--from-cards` 跳过前两步，`--skip-agent` 不执行卡。
 
 ## 8. 脚本参考
 
@@ -220,7 +220,7 @@ python bridge/demo.py --project MyProj --repo /path/to/repo --pain-point-id <id>
 | `wfa_build.py` / `wfb_build.py` / `wfc_build.py` / `wfd_build.py` | 四条工作流的画布生成、保存、试运行 |
 | `sql_admin.py` | 用单节点工作流跑一条维护 SQL（Coze 没有裸 SQL 接口） |
 | `pull_cards.py` | 把卡导出为 `cards/CARD-<id>.md` |
-| `run_card.py` | 在目标仓库开分支，用 `claude -p` 跑卡，收集 `radar_result.json`，提交，切回 |
+| `run_card.py` | 在目标仓库开分支，调用编码 Agent 跑卡，收集 `radar_result.json`，提交，切回 |
 | `report_result.py` | 调 WF-D 回写，把经验写进知识库 |
 | `demo.py` | 一键串联并生成报告 |
 
@@ -265,7 +265,7 @@ python bridge/demo.py --project MyProj --repo /path/to/repo --pain-point-id <id>
 
 ## 12. 成本
 
-实测（gpt-5，2026-10）：WF-B 25 篇一轮约 7.7 万 token（输出 5.5 万，约 0.5 美元，4.5 分钟）；WF-C 40 条机制约 14 分钟，12 条约 4 分钟；WF-A 一次约 3.7 万 token；Claude Code 一张卡 3–5 分钟、约 1.2 美元。一次完整演示（15 篇、12 条机制、1 张卡）约 2 美元 + 1.2 美元，15 分钟左右。
+实测（gpt-5，2026-10）：WF-B 25 篇一轮约 7.7 万 token（输出 5.5 万，约 0.5 美元，4.5 分钟）；WF-C 40 条机制约 14 分钟，12 条约 4 分钟；WF-A 一次约 3.7 万 token；编码 Agent 一张卡 3–5 分钟、约 1.2 美元。一次完整演示（15 篇、12 条机制、1 张卡）约 2 美元 + 1.2 美元，15 分钟左右。
 
 ## 13. 目录结构
 
